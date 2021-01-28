@@ -85,6 +85,7 @@ import org.apache.rocketmq.remoting.exception.RemotingException;
 import org.apache.rocketmq.remoting.netty.NettyClientConfig;
 import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
+// 客户端实例，用来和broker和name server来进行交互
 public class MQClientInstance {
     private final static long LOCK_TIMEOUT_MILLIS = 3000;
     private final InternalLogger log = ClientLogger.getLog();
@@ -227,9 +228,10 @@ public class MQClientInstance {
 
         synchronized (this) {
             switch (this.serviceState) {
-                case CREATE_JUST:
+                case CREATE_JUST:   // 刚刚创建完成
                     this.serviceState = ServiceState.START_FAILED;
                     // If not specified,looking address from name server
+                    // 获取name server的地址
                     if (null == this.clientConfig.getNamesrvAddr()) {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
@@ -604,12 +606,14 @@ public class MQClientInstance {
         }
     }
 
+    // producer去name server查找TOPIC路由信息，相当于netty中的client端。使用的是MQClientInstance
     public boolean updateTopicRouteInfoFromNameServer(final String topic, boolean isDefault,
         DefaultMQProducer defaultMQProducer) {
         try {
             if (this.lockNamesrv.tryLock(LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 try {
                     TopicRouteData topicRouteData;
+                    // 不指定主题 走默认
                     if (isDefault && defaultMQProducer != null) {
                         topicRouteData = this.mQClientAPIImpl.getDefaultTopicRouteInfoFromNameServer(defaultMQProducer.getCreateTopicKey(),
                             1000 * 3);
@@ -621,10 +625,15 @@ public class MQClientInstance {
                             }
                         }
                     } else {
+                        // 我们一般是指定了主题，会走这里
                         topicRouteData = this.mQClientAPIImpl.getTopicRouteInfoFromNameServer(topic, 1000 * 3);
                     }
+
+                    // 从name server拿到最新的路由信息
                     if (topicRouteData != null) {
+                        // 拿到缓存里老的数据
                         TopicRouteData old = this.topicRouteTable.get(topic);
+                        // 比较是否新老路由信息有变更
                         boolean changed = topicRouteDataIsChange(old, topicRouteData);
                         if (!changed) {
                             changed = this.isNeedUpdateTopicRouteInfo(topic);
@@ -632,6 +641,7 @@ public class MQClientInstance {
                             log.info("the topic[{}] route info changed, old[{}] ,new[{}]", topic, old, topicRouteData);
                         }
 
+                        // 如果有变更，更新一下
                         if (changed) {
                             TopicRouteData cloneTopicRouteData = topicRouteData.cloneTopicRouteData();
 

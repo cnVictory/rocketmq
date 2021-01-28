@@ -236,6 +236,7 @@ public class MQClientAPIImpl {
     }
 
     public void start() {
+        // 启动，建立netty client的启动流程
         this.remotingClient.start();
     }
 
@@ -431,6 +432,7 @@ public class MQClientAPIImpl {
         return sendMessage(addr, brokerName, msg, requestHeader, timeoutMillis, communicationMode, null, null, null, 0, context, producer);
     }
 
+    // 发送消息的逻辑
     public SendResult sendMessage(
         final String addr,
         final String brokerName,
@@ -466,6 +468,7 @@ public class MQClientAPIImpl {
         }
         request.setBody(msg.getBody());
 
+        // 根据消息发送的方式，进行选择发送
         switch (communicationMode) {
             case ONEWAY:
                 this.remotingClient.invokeOneway(addr, request, timeoutMillis);
@@ -1359,6 +1362,7 @@ public class MQClientAPIImpl {
         return getTopicRouteInfoFromNameServer(topic, timeoutMillis, true);
     }
 
+    // 请求name server 获取当前主题所对应的路由信息
     public TopicRouteData getTopicRouteInfoFromNameServer(final String topic, final long timeoutMillis,
         boolean allowTopicNotExist) throws MQClientException, InterruptedException, RemotingTimeoutException, RemotingSendRequestException, RemotingConnectException {
         GetRouteInfoRequestHeader requestHeader = new GetRouteInfoRequestHeader();

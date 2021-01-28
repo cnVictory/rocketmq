@@ -56,6 +56,8 @@ public class MQFaultStrategy {
     }
 
     public MessageQueue selectOneMessageQueue(final TopicPublishInfo tpInfo, final String lastBrokerName) {
+
+        // 这里有一个消息发送失败的默认延迟机制， sendLatencyFaultEnable默认为false
         if (this.sendLatencyFaultEnable) {
             try {
                 int index = tpInfo.getSendWhichQueue().getAndIncrement();
@@ -89,6 +91,7 @@ public class MQFaultStrategy {
             return tpInfo.selectOneMessageQueue();
         }
 
+        // 默认
         return tpInfo.selectOneMessageQueue(lastBrokerName);
     }
 

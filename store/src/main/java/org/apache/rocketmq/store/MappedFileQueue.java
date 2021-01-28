@@ -29,21 +29,29 @@ import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 
+// 内存映射文件队列
 public class MappedFileQueue {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private static final InternalLogger LOG_ERROR = InternalLoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
 
     private static final int DELETE_FILES_BATCH_MAX = 10;
 
+    // 存储目录
     private final String storePath;
 
+    // 每一个文件的大小
     private final int mappedFileSize;
 
+    // mappedFile文件集合
     private final CopyOnWriteArrayList<MappedFile> mappedFiles = new CopyOnWriteArrayList<MappedFile>();
 
+    // 创建mapFile服务类 当一个文件写满以后，会使用这个服务类创建一个新的文件
     private final AllocateMappedFileService allocateMappedFileService;
 
+    // 当前刷盘指针
     private long flushedWhere = 0;
+
+    // 当前数据提交指针，内存中byteBuffer当前的写指针，该值大于等于flushWhere
     private long committedWhere = 0;
 
     private volatile long storeTimestamp = 0;

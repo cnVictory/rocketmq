@@ -157,6 +157,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     public DefaultMQProducer(final String producerGroup, RPCHook rpcHook, boolean enableMsgTrace,
         final String customizedTraceTopic) {
         this.producerGroup = producerGroup;
+        // 在创建MQProducer的时候创建了一个DefaultMqProducerImpl的实例
         defaultMQProducerImpl = new DefaultMQProducerImpl(this, rpcHook);
         //if client open the message trace feature
         if (enableMsgTrace) {
@@ -265,9 +266,11 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      *
      * @throws MQClientException if there is any unexpected error.
      */
+    // MQ Producer 开始  这里整合springboot的时候，也要在配置MQProducer的时候使用start方法
     @Override
     public void start() throws MQClientException {
         this.setProducerGroup(withNamespace(this.producerGroup));
+        // 启动
         this.defaultMQProducerImpl.start();
         if (null != traceDispatcher) {
             try {
