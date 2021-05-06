@@ -95,16 +95,22 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
 
     public NettyRemotingServer(final NettyServerConfig nettyServerConfig,
         final ChannelEventListener channelEventListener) {
+
+        // 指定oneway和async方式的最大异步线程并发数
         super(nettyServerConfig.getServerOnewaySemaphoreValue(), nettyServerConfig.getServerAsyncSemaphoreValue());
+
+        // 创建netty的ServerBootstrap配置类
         this.serverBootstrap = new ServerBootstrap();
         this.nettyServerConfig = nettyServerConfig;
         this.channelEventListener = channelEventListener;
 
+        // 获取公共线程池的线程数配置
         int publicThreadNums = nettyServerConfig.getServerCallbackExecutorThreads();
         if (publicThreadNums <= 0) {
             publicThreadNums = 4;
         }
 
+        // 创建公共线程池  处理消息发送 消息消费 心跳检测等
         this.publicExecutor = Executors.newFixedThreadPool(publicThreadNums, new ThreadFactory() {
             private AtomicInteger threadIndex = new AtomicInteger(0);
 
@@ -114,6 +120,7 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
             }
         });
 
+        // 如果使用epoll模式
         if (useEpoll()) {
             this.eventLoopGroupBoss = new EpollEventLoopGroup(1, new ThreadFactory() {
                 private AtomicInteger threadIndex = new AtomicInteger(0);
@@ -181,6 +188,8 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
 
     @Override
     public void start() {
+
+        // 处理业务的线程池
         this.defaultEventExecutorGroup = new DefaultEventExecutorGroup(
             nettyServerConfig.getServerWorkerThreads(),
             new ThreadFactory() {
@@ -193,6 +202,7 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
                 }
             });
 
+        // 准备channelHandler
         prepareSharableHandlers();
 
         ServerBootstrap childHandler =
@@ -212,7 +222,9 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
                             .addLast(defaultEventExecutorGroup, HANDSHAKE_HANDLER_NAME, handshakeHandler)
                             .addLast(defaultEventExecutorGroup,
                                 encoder,
+                                // 添加解码器
                                 new NettyDecoder(),
+                                // 心跳处理的handler
                                 new IdleStateHandler(0, 0, nettyServerConfig.getServerChannelMaxIdleTimeSeconds()),
                                 connectionManageHandler,
                                 serverHandler
@@ -225,6 +237,8 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
         }
 
         try {
+
+            // 启动netty server
             ChannelFuture sync = this.serverBootstrap.bind().sync();
             InetSocketAddress addr = (InetSocketAddress) sync.channel().localAddress();
             this.port = addr.getPort();
@@ -232,10 +246,15 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
             throw new RuntimeException("this.serverBootstrap.bind().sync() InterruptedException", e1);
         }
 
+        /*
+            这里当namesrv启动的时候，也会调用nettyRemotingServer的start方法，来启动这里
+
+         */
         if (this.channelEventListener != null) {
             this.nettyEventExecutor.start();
         }
 
+        // 定期扫描已经过期的请求，从响应列表中剔除
         this.timer.scheduleAtFixedRate(new TimerTask() {
 
             @Override
@@ -343,9 +362,13 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
     }
 
     private void prepareSharableHandlers() {
+        // 握手
         handshakeHandler = new HandshakeHandler(TlsSystemConfig.tlsMode);
+        // 编码
         encoder = new NettyEncoder();
+        // 连接管理
         connectionManageHandler = new NettyConnectManageHandler();
+        // netty服务端处理器
         serverHandler = new NettyServerHandler();
     }
 
@@ -365,21 +388,26 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
 
             // mark the current position so that we can peek the first byte to determine if the content is starting with
             // TLS handshake
+            // 标记当前位置，以便我们可以查看第一个字节以确定内容是否以TLS握手开始
             msg.markReaderIndex();
 
             byte b = msg.getByte(0);
 
             if (b == HANDSHAKE_MAGIC_CODE) {
                 switch (tlsMode) {
+                    // 服务器禁用SSL 但是客户端打算建立SSL连接的时候
                     case DISABLED:
                         ctx.close();
                         log.warn("Clients intend to establish an SSL connection while this server is running in SSL disabled mode");
                         break;
                     case PERMISSIVE:
+                        // 尝试建立SSL连接
                     case ENFORCING:
                         if (null != sslContext) {
                             ctx.pipeline()
+                                    // 添加netty提供的SSLHandler 来提供对SSL协议的支持
                                 .addAfter(defaultEventExecutorGroup, HANDSHAKE_HANDLER_NAME, TLS_HANDLER_NAME, sslContext.newHandler(ctx.channel().alloc()))
+                                    // 文件区域直接传输到channel  支持零拷贝
                                 .addAfter(defaultEventExecutorGroup, TLS_HANDLER_NAME, FILE_REGION_ENCODER_NAME, new FileRegionEncoder());
                             log.info("Handlers prepended to channel pipeline to establish SSL connection");
                         } else {
@@ -398,10 +426,12 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
             }
 
             // reset the reader index so that handshake negotiation may proceed as normal.
+            // 重置readerIndex ，以便握手可以正常进行
             msg.resetReaderIndex();
 
             try {
                 // Remove this handler
+                // 握手时处理一次就可以， 握手后移除掉此handler
                 ctx.pipeline().remove(this);
             } catch (NoSuchElementException e) {
                 log.error("Error while removing HandshakeHandler", e);
@@ -415,6 +445,7 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
     @ChannelHandler.Sharable
     class NettyServerHandler extends SimpleChannelInboundHandler<RemotingCommand> {
 
+        // 当接收到连接过来的消息时处理
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, RemotingCommand msg) throws Exception {
             processMessageReceived(ctx, msg);
@@ -423,6 +454,12 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
 
     @ChannelHandler.Sharable
     class NettyConnectManageHandler extends ChannelDuplexHandler {
+
+        /**
+         * 通道注册
+         * @param ctx
+         * @throws Exception
+         */
         @Override
         public void channelRegistered(ChannelHandlerContext ctx) throws Exception {
             final String remoteAddress = RemotingHelper.parseChannelRemoteAddr(ctx.channel());
@@ -430,6 +467,11 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
             super.channelRegistered(ctx);
         }
 
+        /**
+         * 通道取消注册
+         * @param ctx
+         * @throws Exception
+         */
         @Override
         public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
             final String remoteAddress = RemotingHelper.parseChannelRemoteAddr(ctx.channel());
@@ -437,6 +479,11 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
             super.channelUnregistered(ctx);
         }
 
+        /**
+         * 通道激活可用
+         * @param ctx
+         * @throws Exception
+         */
         @Override
         public void channelActive(ChannelHandlerContext ctx) throws Exception {
             final String remoteAddress = RemotingHelper.parseChannelRemoteAddr(ctx.channel());
@@ -448,6 +495,11 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
             }
         }
 
+        /**
+         * 通道连接inactive不活动以后
+         * @param ctx
+         * @throws Exception
+         */
         @Override
         public void channelInactive(ChannelHandlerContext ctx) throws Exception {
             final String remoteAddress = RemotingHelper.parseChannelRemoteAddr(ctx.channel());
@@ -455,6 +507,8 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
             super.channelInactive(ctx);
 
             if (NettyRemotingServer.this.channelEventListener != null) {
+
+                // 当检测到netty连接的通道关闭以后，会将关闭的事件放到nettyEventExecutor中去处理
                 NettyRemotingServer.this.putNettyEvent(new NettyEvent(NettyEventType.CLOSE, remoteAddress, ctx.channel()));
             }
         }

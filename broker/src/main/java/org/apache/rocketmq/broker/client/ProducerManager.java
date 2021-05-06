@@ -30,10 +30,18 @@ import org.apache.rocketmq.logging.InternalLoggerFactory;
 import org.apache.rocketmq.remoting.common.RemotingHelper;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
 
+/**
+ * 生产者管理器
+ */
 public class ProducerManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private static final long CHANNEL_EXPIRED_TIMEOUT = 1000 * 120;
     private static final int GET_AVAILABLE_CHANNEL_RETRY_COUNT = 3;
+
+    // 生产者组缓存表
+    /*
+        <groupname - < channel  -  channelInfo> >
+     */
     private final ConcurrentHashMap<String /* group name */, ConcurrentHashMap<Channel, ClientChannelInfo>> groupChannelTable =
         new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Channel> clientChannelTable = new ConcurrentHashMap<>();
@@ -49,6 +57,7 @@ public class ProducerManager {
     public void scanNotActiveChannel() {
         for (final Map.Entry<String, ConcurrentHashMap<Channel, ClientChannelInfo>> entry : this.groupChannelTable
                 .entrySet()) {
+            // 生产者的组名 groupName
             final String group = entry.getKey();
             final ConcurrentHashMap<Channel, ClientChannelInfo> chlMap = entry.getValue();
 
@@ -58,6 +67,7 @@ public class ProducerManager {
                 // final Integer id = item.getKey();
                 final ClientChannelInfo info = item.getValue();
 
+                // 最后一次更新时间如果超时了，从缓存表中移除，并关闭channel
                 long diff = System.currentTimeMillis() - info.getLastUpdateTimestamp();
                 if (diff > CHANNEL_EXPIRED_TIMEOUT) {
                     it.remove();

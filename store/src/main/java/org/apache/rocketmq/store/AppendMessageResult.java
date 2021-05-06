@@ -40,6 +40,16 @@ public class AppendMessageResult {
         this(status, 0, 0, "", 0, 0, 0);
     }
 
+    /**
+     * 组装消息追加的结果
+     * @param status 消息追加状态 成功|到达文件末尾（文件剩余空间不足）|消息长度超过|消息属性长度超出|未知错误
+     * @param wroteOffset 消息偏移量（相对于整个commitLog）
+     * @param wroteBytes 消息待写入字节
+     * @param msgId 消息ID
+     * @param storeTimestamp 消息写入时间戳
+     * @param logicsOffset 消息队列messageQueue逻辑偏移量
+     * @param pagecacheRT 消息写入时间戳（消息存储时间戳-消息存储开始时间戳）
+     */
     public AppendMessageResult(AppendMessageStatus status, long wroteOffset, int wroteBytes, String msgId,
         long storeTimestamp, long logicsOffset, long pagecacheRT) {
         this.status = status;

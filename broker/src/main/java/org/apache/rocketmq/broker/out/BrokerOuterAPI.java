@@ -74,6 +74,7 @@ public class BrokerOuterAPI {
         this.remotingClient.registerRPCHook(rpcHook);
     }
 
+    // broker作为netty的客户端，处理对namesrv的信息上报和心跳连接
     public void start() {
         this.remotingClient.start();
     }
@@ -110,6 +111,20 @@ public class BrokerOuterAPI {
         this.remotingClient.updateNameServerAddressList(lst);
     }
 
+    /**
+     * 给namesrv发送broker的心跳，下面的参数包括
+     * @param clusterName 集群名称
+     * @param brokerAddr broker地址
+     * @param brokerName broker名称
+     * @param brokerId broker ID
+     * @param haServerAddr HA服务器地址
+     * @param topicConfigWrapper 主题配置信息
+     * @param filterServerList 过滤服务器配置信息
+     * @param oneway 是否oneway
+     * @param timeoutMills 超时时间
+     * @param compressed 是否压缩
+     * @return
+     */
     public List<RegisterBrokerResult> registerBrokerAll(
         final String clusterName,
         final String brokerAddr,
@@ -141,11 +156,14 @@ public class BrokerOuterAPI {
             final int bodyCrc32 = UtilAll.crc32(body);
             requestHeader.setBodyCrc32(bodyCrc32);
             final CountDownLatch countDownLatch = new CountDownLatch(nameServerAddressList.size());
+
+            // 遍历name server，向每一个namesrv注册路由信息
             for (final String namesrvAddr : nameServerAddressList) {
                 brokerOuterExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
                         try {
+                            // 这里注册
                             RegisterBrokerResult result = registerBroker(namesrvAddr,oneway, timeoutMills,requestHeader,body);
                             if (result != null) {
                                 registerBrokerResultList.add(result);
@@ -181,6 +199,7 @@ public class BrokerOuterAPI {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.REGISTER_BROKER, requestHeader);
         request.setBody(body);
 
+        // 如果是oneway的方式， 通过客户端发送心跳
         if (oneway) {
             try {
                 this.remotingClient.invokeOneway(namesrvAddr, request, timeoutMills);
@@ -190,6 +209,7 @@ public class BrokerOuterAPI {
             return null;
         }
 
+        // 正常不是oneway的情况，通过invokeSync同步的方式发送心跳
         RemotingCommand response = this.remotingClient.invokeSync(namesrvAddr, request, timeoutMills);
         assert response != null;
         switch (response.getCode()) {
@@ -344,6 +364,7 @@ public class BrokerOuterAPI {
         final String addr) throws InterruptedException, RemotingTimeoutException,
         RemotingSendRequestException, RemotingConnectException, MQBrokerException {
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.GET_ALL_CONSUMER_OFFSET, null);
+        // 同步调用
         RemotingCommand response = this.remotingClient.invokeSync(addr, request, 3000);
         assert response != null;
         switch (response.getCode()) {

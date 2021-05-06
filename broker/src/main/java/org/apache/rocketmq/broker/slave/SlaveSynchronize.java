@@ -46,26 +46,38 @@ public class SlaveSynchronize {
     }
 
     public void syncAll() {
+        // 同步topic配置信息
         this.syncTopicConfig();
+        // 同步消费者偏移量
         this.syncConsumerOffset();
+        // 同步延迟偏移量
         this.syncDelayOffset();
+        // 同步订阅配置信息
         this.syncSubscriptionGroupConfig();
     }
 
+    /**
+     * 同步TOPIC
+     */
     private void syncTopicConfig() {
         String masterAddrBak = this.masterAddr;
         if (masterAddrBak != null && !masterAddrBak.equals(brokerController.getBrokerAddr())) {
             try {
+                // 使用同步调用的方式从master获取Topic
                 TopicConfigSerializeWrapper topicWrapper =
                     this.brokerController.getBrokerOuterAPI().getAllTopicConfig(masterAddrBak);
+                // 更新之前，需要判断一下是否版本是一样的
                 if (!this.brokerController.getTopicConfigManager().getDataVersion()
                     .equals(topicWrapper.getDataVersion())) {
 
+                    // 更新topicConfigManager中的信息
                     this.brokerController.getTopicConfigManager().getDataVersion()
                         .assignNewOne(topicWrapper.getDataVersion());
                     this.brokerController.getTopicConfigManager().getTopicConfigTable().clear();
                     this.brokerController.getTopicConfigManager().getTopicConfigTable()
                         .putAll(topicWrapper.getTopicConfigTable());
+
+                    // 把topic的配置内容持久化到磁盘  使用的是java IO类，并且是同步synchronized修饰的方法
                     this.brokerController.getTopicConfigManager().persist();
 
                     log.info("Update slave topic config from master, {}", masterAddrBak);
@@ -80,10 +92,12 @@ public class SlaveSynchronize {
         String masterAddrBak = this.masterAddr;
         if (masterAddrBak != null && !masterAddrBak.equals(brokerController.getBrokerAddr())) {
             try {
+                // netty 同步调用
                 ConsumerOffsetSerializeWrapper offsetWrapper =
                     this.brokerController.getBrokerOuterAPI().getAllConsumerOffset(masterAddrBak);
                 this.brokerController.getConsumerOffsetManager().getOffsetTable()
                     .putAll(offsetWrapper.getOffsetTable());
+                // 持久化
                 this.brokerController.getConsumerOffsetManager().persist();
                 log.info("Update slave consumer offset from master, {}", masterAddrBak);
             } catch (Exception e) {

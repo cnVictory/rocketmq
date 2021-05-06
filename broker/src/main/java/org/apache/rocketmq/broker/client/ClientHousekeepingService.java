@@ -40,6 +40,7 @@ public class ClientHousekeepingService implements ChannelEventListener {
 
     public void start() {
 
+        // 每10s扫描，异常的channel
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
             @Override
             public void run() {
@@ -53,8 +54,14 @@ public class ClientHousekeepingService implements ChannelEventListener {
     }
 
     private void scanExceptionChannel() {
+
+        // 消息生产者端的不活动的channel连接
         this.brokerController.getProducerManager().scanNotActiveChannel();
+
+        // 消息消费者端的不活动的channel连接
         this.brokerController.getConsumerManager().scanNotActiveChannel();
+
+        // filter不活动的channel
         this.brokerController.getFilterServerManager().scanNotActiveChannel();
     }
 

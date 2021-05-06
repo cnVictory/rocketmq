@@ -87,10 +87,21 @@ public class UtilAll {
         return sb.toString();
     }
 
+    /**
+     * 最终返回一个20位的数值型字符串，前面使用0来填充，后面是数值
+     * @param offset
+     * @return
+     */
     public static String offset2FileName(final long offset) {
+        // 返回当前默认语言环境的通用数值格式
         final NumberFormat nf = NumberFormat.getInstance();
+        // 设置数值的整数部分所允许的最小位数
         nf.setMinimumIntegerDigits(20);
+        // 设置数值的小数部分所允许的最大位数
         nf.setMaximumFractionDigits(0);
+        // 设置次格式中是否使用分组，如果次格式中使用了分组，则为true
+        // 例如，在english语言环境中，如果使用了分组，则数123456将被格式化为 1,234,567
+        // 组分隔符以及每个组的大小是与语言环境相关的，由NumberFormat子类确定
         nf.setGroupingUsed(false);
         return nf.format(offset);
     }

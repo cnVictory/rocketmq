@@ -47,6 +47,7 @@ public class NamesrvStartup {
     private static Properties properties = null;
     private static CommandLine commandLine = null;
 
+    // namesrv的启动入口
     public static void main(String[] args) {
         main0(args);
     }
@@ -54,7 +55,9 @@ public class NamesrvStartup {
     public static NamesrvController main0(String[] args) {
 
         try {
+            // 创建配置
             NamesrvController controller = createNamesrvController(args);
+            // 启动namesrv
             start(controller);
             String tip = "The Name Server boot success. serializeType=" + RemotingCommand.getSerializeTypeConfigInThisServer();
             log.info(tip);
@@ -72,6 +75,7 @@ public class NamesrvStartup {
         System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));
         //PackageConflictDetect.detectFastjson();
 
+        // 多个namesrv的地址之间使用;分号进行分割   192.168.0.1:9876;192.168.0.2:9876
         Options options = ServerUtil.buildCommandlineOptions(new Options());
         commandLine = ServerUtil.parseCmdLine("mqnamesrv", args, buildCommandlineOptions(options), new PosixParser());
         if (null == commandLine) {
@@ -79,7 +83,9 @@ public class NamesrvStartup {
             return null;
         }
 
+        // namesrv配置类
         final NamesrvConfig namesrvConfig = new NamesrvConfig();
+        // netty配置类
         final NettyServerConfig nettyServerConfig = new NettyServerConfig();
         nettyServerConfig.setListenPort(9876);
         if (commandLine.hasOption('c')) {
@@ -123,6 +129,7 @@ public class NamesrvStartup {
         MixAll.printObjectProperties(log, namesrvConfig);
         MixAll.printObjectProperties(log, nettyServerConfig);
 
+        // 创建NamesrvController
         final NamesrvController controller = new NamesrvController(namesrvConfig, nettyServerConfig);
 
         // remember all configs to prevent discard
@@ -137,12 +144,15 @@ public class NamesrvStartup {
             throw new IllegalArgumentException("NamesrvController is null");
         }
 
+        // 初始化
         boolean initResult = controller.initialize();
+        // 初始化失败，走shutdown
         if (!initResult) {
             controller.shutdown();
             System.exit(-3);
         }
 
+        // 注册一个钩子，用于在JVM退出的时候触发controller.shutdown
         Runtime.getRuntime().addShutdownHook(new ShutdownHookThread(log, new Callable<Void>() {
             @Override
             public Void call() throws Exception {
@@ -151,6 +161,7 @@ public class NamesrvStartup {
             }
         }));
 
+        // 启动namesrv
         controller.start();
 
         return controller;

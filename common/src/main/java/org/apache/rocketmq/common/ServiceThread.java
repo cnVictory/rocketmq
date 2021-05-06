@@ -120,6 +120,10 @@ public abstract class ServiceThread implements Runnable {
         log.info("makestop thread " + this.getServiceName());
     }
 
+    /**
+     * 唤醒方法
+     * 把AtomicBoolean的属性hasNotified 从false改为true
+     */
     public void wakeup() {
         if (hasNotified.compareAndSet(false, true)) {
             waitPoint.countDown(); // notify
@@ -127,19 +131,26 @@ public abstract class ServiceThread implements Runnable {
     }
 
     protected void waitForRunning(long interval) {
+
+        // 当发现hastNotified状态被更改了，这里可以把它从true改为false，则return，继续后面
         if (hasNotified.compareAndSet(true, false)) {
+            // 把读写的列表内数据交换，然后return
             this.onWaitEnd();
             return;
         }
 
+        // 上面修改状态不成功时，继续走这里，清除countDownLatch的数值
         //entry to wait
         waitPoint.reset();
 
         try {
+            // 等待interval时间，上面传过来的是10ms
             waitPoint.await(interval, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             log.error("Interrupted", e);
         } finally {
+
+            // 当countDownLatch被唤醒后，这里需要把状态标识改为false
             hasNotified.set(false);
             this.onWaitEnd();
         }

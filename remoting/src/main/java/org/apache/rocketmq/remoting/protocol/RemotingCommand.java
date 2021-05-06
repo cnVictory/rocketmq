@@ -231,10 +231,17 @@ public class RemotingCommand {
         this.customHeader = customHeader;
     }
 
+    /**
+     * 通过反射解析header信息
+     * @param classHeader
+     * @return
+     * @throws RemotingCommandException
+     */
     public CommandCustomHeader decodeCommandCustomHeader(
         Class<? extends CommandCustomHeader> classHeader) throws RemotingCommandException {
         CommandCustomHeader objectHeader;
         try {
+            // 通过类型反射生成bean
             objectHeader = classHeader.newInstance();
         } catch (InstantiationException e) {
             return null;
@@ -244,6 +251,7 @@ public class RemotingCommand {
 
         if (this.extFields != null) {
 
+            // 找到声明的属性
             Field[] fields = getClazzFields(classHeader);
             for (Field field : fields) {
                 if (!Modifier.isStatic(field.getModifiers())) {
@@ -276,6 +284,7 @@ public class RemotingCommand {
                                 throw new RemotingCommandException("the custom field <" + fieldName + "> type is not supported");
                             }
 
+                            // 把object按照field的类型转换，然后通过反射设置值
                             field.set(objectHeader, valueParsed);
 
                         } catch (Throwable e) {

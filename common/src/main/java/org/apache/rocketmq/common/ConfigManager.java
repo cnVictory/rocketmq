@@ -67,6 +67,9 @@ public abstract class ConfigManager {
 
     public abstract void decode(final String jsonString);
 
+    /**
+     * 同步方法，使用java IO 的文件操作
+     */
     public synchronized void persist() {
         String jsonString = this.encode(true);
         if (jsonString != null) {

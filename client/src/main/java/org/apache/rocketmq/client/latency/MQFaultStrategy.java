@@ -56,18 +56,26 @@ public class MQFaultStrategy {
     }
 
     public MessageQueue selectOneMessageQueue(final TopicPublishInfo tpInfo, final String lastBrokerName) {
+
+        // 这里有一个消息发送失败的默认延迟机制， sendLatencyFaultEnable默认为false
         if (this.sendLatencyFaultEnable) {
             try {
+                // 记录在threadlocal中，每次投递都会+1
                 int index = tpInfo.getSendWhichQueue().getAndIncrement();
                 for (int i = 0; i < tpInfo.getMessageQueueList().size(); i++) {
                     int pos = Math.abs(index++) % tpInfo.getMessageQueueList().size();
                     if (pos < 0)
                         pos = 0;
                     MessageQueue mq = tpInfo.getMessageQueueList().get(pos);
+
+                    // 在ConcurrentHashMap<String, FaultItem> 中记录一下，投递失败的broker
+                    // 在一定时间内，是不会向这个broker投递消息的
+                    // 这里不满足条件，就在for循环中选择下一个messageQueue（如果这个messageQueue所在的broker是可用的）则返回
                     if (latencyFaultTolerance.isAvailable(mq.getBrokerName()))
                         return mq;
                 }
 
+                // 如果全部不可用，选择一个可能好一点的尝试投递
                 final String notBestBroker = latencyFaultTolerance.pickOneAtLeast();
                 int writeQueueNums = tpInfo.getQueueIdByBroker(notBestBroker);
                 if (writeQueueNums > 0) {
@@ -87,6 +95,7 @@ public class MQFaultStrategy {
             return tpInfo.selectOneMessageQueue();
         }
 
+        // 默认 轮询方式
         return tpInfo.selectOneMessageQueue(lastBrokerName);
     }
 

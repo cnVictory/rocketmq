@@ -54,13 +54,19 @@ public class BrokerStartup {
     public static String configFile = null;
     public static InternalLogger log;
 
+    // broker启动类
     public static void main(String[] args) {
+
+        // 创建broker的启动 controller  并启动start
         start(createBrokerController(args));
     }
 
+    // 启动controller
     public static BrokerController start(BrokerController controller) {
         try {
 
+            // broker启动的时候会去注册路由信息  并且对于slave来说，需要从master同步元数据
+            // broker启动的主要流程
             controller.start();
 
             String tip = "The broker[" + controller.getBrokerConfig().getBrokerName() + ", "
@@ -90,10 +96,12 @@ public class BrokerStartup {
     public static BrokerController createBrokerController(String[] args) {
         System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));
 
+        // 默认发送缓冲区的大小
         if (null == System.getProperty(NettySystemConfig.COM_ROCKETMQ_REMOTING_SOCKET_SNDBUF_SIZE)) {
             NettySystemConfig.socketSndbufSize = 131072;
         }
 
+        // 默认接收缓冲区的大小
         if (null == System.getProperty(NettySystemConfig.COM_ROCKETMQ_REMOTING_SOCKET_RCVBUF_SIZE)) {
             NettySystemConfig.socketRcvbufSize = 131072;
         }
@@ -107,13 +115,22 @@ public class BrokerStartup {
                 System.exit(-1);
             }
 
+            // broker配置
             final BrokerConfig brokerConfig = new BrokerConfig();
+
+            // nettyServer配置 作为接受producer消息的server端
             final NettyServerConfig nettyServerConfig = new NettyServerConfig();
+
+            // nettyClient配置 作为上报name server信息的client端
             final NettyClientConfig nettyClientConfig = new NettyClientConfig();
 
             nettyClientConfig.setUseTLS(Boolean.parseBoolean(System.getProperty(TLS_ENABLE,
                 String.valueOf(TlsSystemConfig.tlsMode == TlsMode.ENFORCING))));
+
+            // 配置RocketMQ监听消息发送的端口，生产者producer通过10911将消息发送给broker
             nettyServerConfig.setListenPort(10911);
+
+            // 消息存储的配置
             final MessageStoreConfig messageStoreConfig = new MessageStoreConfig();
 
             if (BrokerRole.SLAVE == messageStoreConfig.getBrokerRole()) {
@@ -130,6 +147,8 @@ public class BrokerStartup {
                     properties.load(in);
 
                     properties2SystemEnv(properties);
+
+                    // 把配置文件和启动参数设置到 各种配置类上
                     MixAll.properties2Object(properties, brokerConfig);
                     MixAll.properties2Object(properties, nettyServerConfig);
                     MixAll.properties2Object(properties, nettyClientConfig);
@@ -147,6 +166,7 @@ public class BrokerStartup {
                 System.exit(-2);
             }
 
+            // 能够从broker.conf 这个配置文件中获得namesrv的配置地址
             String namesrvAddr = brokerConfig.getNamesrvAddr();
             if (null != namesrvAddr) {
                 try {
@@ -183,6 +203,8 @@ public class BrokerStartup {
             }
 
             messageStoreConfig.setHaListenPort(nettyServerConfig.getListenPort() + 1);
+
+            // 日志相关配置
             LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
             JoranConfigurator configurator = new JoranConfigurator();
             configurator.setContext(lc);
@@ -211,6 +233,7 @@ public class BrokerStartup {
             MixAll.printObjectProperties(log, nettyClientConfig);
             MixAll.printObjectProperties(log, messageStoreConfig);
 
+            // 创建BrokerController
             final BrokerController controller = new BrokerController(
                 brokerConfig,
                 nettyServerConfig,
@@ -219,12 +242,14 @@ public class BrokerStartup {
             // remember all configs to prevent discard
             controller.getConfiguration().registerConfig(properties);
 
+            // 初始化BrokerController  里面包含slave从master同步元数据
             boolean initResult = controller.initialize();
             if (!initResult) {
                 controller.shutdown();
                 System.exit(-3);
             }
 
+            // 向JVM添加一个钩子，当JVM退出的时候，释放broker资源
             Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
                 private volatile boolean hasShutdown = false;
                 private AtomicInteger shutdownTimes = new AtomicInteger(0);

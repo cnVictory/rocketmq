@@ -155,6 +155,7 @@ public class RemotingHelper {
         if (null == channel) {
             return "";
         }
+        // 获取netty channel通道的addr地址也就是broker的ip地址
         SocketAddress remote = channel.remoteAddress();
         final String addr = remote != null ? remote.toString() : "";
 

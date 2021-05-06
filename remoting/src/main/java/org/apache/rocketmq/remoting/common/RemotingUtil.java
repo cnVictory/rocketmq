@@ -190,7 +190,9 @@ public class RemotingUtil {
     }
 
     public static void closeChannel(Channel channel) {
+        // 获取channel的remoteAddr，也就是broker的IP
         final String addrRemote = RemotingHelper.parseChannelRemoteAddr(channel);
+        // 关闭netty通道，添加监听器，当操作完成后，打印日志
         channel.close().addListener(new ChannelFutureListener() {
             @Override
             public void operationComplete(ChannelFuture future) throws Exception {

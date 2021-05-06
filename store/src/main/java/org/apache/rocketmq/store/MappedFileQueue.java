@@ -29,21 +29,29 @@ import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.InternalLogger;
 import org.apache.rocketmq.logging.InternalLoggerFactory;
 
-public class MappedFileQueue {
+// 内存映射文件队列
+public class  MappedFileQueue {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private static final InternalLogger LOG_ERROR = InternalLoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
 
     private static final int DELETE_FILES_BATCH_MAX = 10;
 
+    // 存储目录
     private final String storePath;
 
+    // 每一个文件的大小
     private final int mappedFileSize;
 
+    // mappedFile文件集合
     private final CopyOnWriteArrayList<MappedFile> mappedFiles = new CopyOnWriteArrayList<MappedFile>();
 
+    // 创建mapFile服务类 当一个文件写满以后，会使用这个服务类创建一个新的文件
     private final AllocateMappedFileService allocateMappedFileService;
 
+    // 当前刷盘指针
     private long flushedWhere = 0;
+
+    // 当前数据提交指针，内存中byteBuffer当前的写指针，该值大于等于flushWhere
     private long committedWhere = 0;
 
     private volatile long storeTimestamp = 0;
@@ -191,25 +199,51 @@ public class MappedFileQueue {
         return 0;
     }
 
+    /**
+     * 创建映射文件
+     * @param startOffset 起始偏移量
+     * @param needCreate 是否需要创建
+     * @return
+     */
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
+
+        // 这个commitLog文件的起始偏移地址
         long createOffset = -1;
+        // 获取最后一个映射文件，如果为null，创建一个新的映射文件
         MappedFile mappedFileLast = getLastMappedFile();
 
+        // 1. 最后一个映射文件为null，也即mappedFiles为空，创建一个新的映射文件（这也是第一个映射文件）
         if (mappedFileLast == null) {
+            // 计算将要创建的映射文件的物理偏移量
+            // startOffset是消息的全局物理偏移量，如果指定的startOffset不足mappedFileSize，则从offset 0 开始
+            // 否则从为mappedFileSize整数倍的offset开始
+            // 这里的createOffset是消息在文件的起始偏移量
             createOffset = startOffset - (startOffset % this.mappedFileSize);
         }
 
+        // 2. 最后一个映射文件不为null 并且文件满了，
+        // 则新建文件的物理存储位置，是从最后一个文件的fromOffset+文件大小
         if (mappedFileLast != null && mappedFileLast.isFull()) {
             createOffset = mappedFileLast.getFileFromOffset() + this.mappedFileSize;
         }
 
+        // 如果这里需要创建新的文件
+        // 为空和不为空但是已经满了，则createOffset就不是-1了， 第二个条件，看是否需要创建，这里是外围调用方法传递进来的
         if (createOffset != -1 && needCreate) {
+
+            // 这里创建2个映射文件 一个是当前的映射文件，一个是当前文件的下一个映射文件  TODO why？
             String nextFilePath = this.storePath + File.separator + UtilAll.offset2FileName(createOffset);
             String nextNextFilePath = this.storePath + File.separator
                 + UtilAll.offset2FileName(createOffset + this.mappedFileSize);
             MappedFile mappedFile = null;
 
+            // 创建新的
             if (this.allocateMappedFileService != null) {
+                // 通过allocateMessageFileService这个服务，来创建新的映射文件，因为是预分配方式，性能很高
+                // 如果上述方式分配失败，在通过new创建映射文件
+                /*
+                    入参为2个commitLog的起始偏移量和文件的大小
+                 */
                 mappedFile = this.allocateMappedFileService.putRequestAndReturnMappedFile(nextFilePath,
                     nextNextFilePath, this.mappedFileSize);
             } else {
@@ -224,6 +258,7 @@ public class MappedFileQueue {
                 if (this.mappedFiles.isEmpty()) {
                     mappedFile.setFirstCreateInQueue(true);
                 }
+                // 放到MappedFileQueue中的 CopyOnWriteArrayList<MappedFile> 这个写时复制的集合中
                 this.mappedFiles.add(mappedFile);
             }
 
@@ -240,8 +275,12 @@ public class MappedFileQueue {
     public MappedFile getLastMappedFile() {
         MappedFile mappedFileLast = null;
 
+        // 这里的mappedFiles是CopyOnWriteArrayList<MappedFile> ,这个属性是什么时候加载的呢？
+        // 当broker启动的时候，在broker的initialize方法中，有一个load方法，这里面去磁盘上面找commitLog文件
+        // 加载成mappedFIle
         while (!this.mappedFiles.isEmpty()) {
             try {
+                // 获取最后一个mappedFile
                 mappedFileLast = this.mappedFiles.get(this.mappedFiles.size() - 1);
                 break;
             } catch (IndexOutOfBoundsException e) {
@@ -422,12 +461,22 @@ public class MappedFileQueue {
         return deleteCount;
     }
 
+    /**
+     * 刷盘
+     * @param flushLeastPages
+     * @return
+     */
     public boolean flush(final int flushLeastPages) {
         boolean result = true;
+        // 根据偏移量（上次刷盘的位置）找MappedFile
         MappedFile mappedFile = this.findMappedFileByOffset(this.flushedWhere, this.flushedWhere == 0);
         if (mappedFile != null) {
             long tmpTimeStamp = mappedFile.getStoreTimestamp();
+
+            // 刷盘操作
             int offset = mappedFile.flush(flushLeastPages);
+
+            // 更新刷盘后的未知，下次来的时候，从这个位置开始刷盘
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.flushedWhere;
             this.flushedWhere = where;
@@ -443,6 +492,8 @@ public class MappedFileQueue {
         boolean result = true;
         MappedFile mappedFile = this.findMappedFileByOffset(this.committedWhere, this.committedWhere == 0);
         if (mappedFile != null) {
+
+            // 刷盘
             int offset = mappedFile.commit(commitLeastPages);
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.committedWhere;

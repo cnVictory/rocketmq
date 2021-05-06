@@ -336,6 +336,8 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
         this.consumerGroup = consumerGroup;
         this.namespace = namespace;
         this.allocateMessageQueueStrategy = allocateMessageQueueStrategy;
+
+        // 创建defaultMQPushConsumerImpl，传入defaultMQPushConsumer 自己
         defaultMQPushConsumerImpl = new DefaultMQPushConsumerImpl(this, rpcHook);
     }
 
@@ -692,9 +694,14 @@ public class DefaultMQPushConsumer extends ClientConfig implements MQPushConsume
      *
      * @throws MQClientException if there is any client error.
      */
+    // MQ consumer的启动类从这里start()方法开始
     @Override
     public void start() throws MQClientException {
+
+        // 设置消费者组
         setConsumerGroup(NamespaceUtil.wrapNamespace(this.getNamespace(), this.consumerGroup));
+
+        // 启动defaultMQPushConsumerImpl
         this.defaultMQPushConsumerImpl.start();
         if (null != traceDispatcher) {
             try {

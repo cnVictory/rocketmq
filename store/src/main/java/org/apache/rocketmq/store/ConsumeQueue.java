@@ -28,6 +28,7 @@ import org.apache.rocketmq.store.config.StorePathConfigHelper;
 public class ConsumeQueue {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    // consumeQueue中存放的每一个消息的大小 都是20K
     public static final int CQ_STORE_UNIT_SIZE = 20;
     private static final InternalLogger LOG_ERROR = InternalLoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
 
@@ -85,22 +86,41 @@ public class ConsumeQueue {
         return result;
     }
 
+    /**
+     * 恢复每一个topic中的每一个queue
+     */
     public void recover() {
+
+        /*
+            从倒数第三个文件开始恢复，恢复的数据：
+            1. MappedFile(flushedPosition+committedPosition+WrotePosition)
+            2. MappedFileQueue(flushWhere  committedWhere)
+            3. ConsumeQueue(maxPhysicOffset)
+         */
         final List<MappedFile> mappedFiles = this.mappedFileQueue.getMappedFiles();
         if (!mappedFiles.isEmpty()) {
 
+            // 倒数第3个文件的索引
             int index = mappedFiles.size() - 3;
             if (index < 0)
                 index = 0;
 
             int mappedFileSizeLogics = this.mappedFileSize;
+            // 拿到倒数第3个mappedFile文件
             MappedFile mappedFile = mappedFiles.get(index);
             ByteBuffer byteBuffer = mappedFile.sliceByteBuffer();
             long processOffset = mappedFile.getFileFromOffset();
             long mappedFileOffset = 0;
             long maxExtAddr = 1;
             while (true) {
+                // 循环遍历mappedFile中的byteBuffer上的消息
                 for (int i = 0; i < mappedFileSizeLogics; i += CQ_STORE_UNIT_SIZE) {
+                    /*
+                        下面3个参数都是ConsumeQueue中的参数
+                        offset:commitLog中的位置
+                        size:消息大小
+                        tag:消息的tag
+                     */
                     long offset = byteBuffer.getLong();
                     int size = byteBuffer.getInt();
                     long tagsCode = byteBuffer.getLong();
@@ -395,8 +415,14 @@ public class ConsumeQueue {
                         topic, queueId, request.getCommitLogOffset());
                 }
             }
+
+            // 这里 offset：需要重构ConsumeQueue的message的commitLog的物理位置
+            // size ： message大小
+            // tagsCode： message的TagCode
+            // cqOffset : 消息队列的逻辑偏移
             boolean result = this.putMessagePositionInfo(request.getCommitLogOffset(),
                 request.getMsgSize(), tagsCode, request.getConsumeQueueOffset());
+
             if (result) {
                 if (this.defaultMessageStore.getMessageStoreConfig().getBrokerRole() == BrokerRole.SLAVE ||
                     this.defaultMessageStore.getMessageStoreConfig().isEnableDLegerCommitLog()) {
@@ -425,12 +451,15 @@ public class ConsumeQueue {
     private boolean putMessagePositionInfo(final long offset, final int size, final long tagsCode,
         final long cqOffset) {
 
+        // 判断消息在commitLog中的物理偏移量+ 消息大小  是否 <= 最大物理偏移量
         if (offset + size <= this.maxPhysicOffset) {
             log.warn("Maybe try to build consume queue repeatedly maxPhysicOffset={} phyOffset={}", maxPhysicOffset, offset);
             return true;
         }
 
+        // java NIO 开始写
         this.byteBufferIndex.flip();
+        // 限制message存储20
         this.byteBufferIndex.limit(CQ_STORE_UNIT_SIZE);
         this.byteBufferIndex.putLong(offset);
         this.byteBufferIndex.putInt(size);
@@ -438,9 +467,12 @@ public class ConsumeQueue {
 
         final long expectLogicOffset = cqOffset * CQ_STORE_UNIT_SIZE;
 
+        // 拿到consumeQueue文件的mappedFile
         MappedFile mappedFile = this.mappedFileQueue.getLastMappedFile(expectLogicOffset);
         if (mappedFile != null) {
 
+            // 如果mappedFileQueue的MappedFile list被清除
+            // 需要保证消息队列的逻辑位置，和consumeQueue文件的起始文件和偏移保持一致，要补充空的逻辑消息
             if (mappedFile.isFirstCreateInQueue() && cqOffset != 0 && mappedFile.getWrotePosition() == 0) {
                 this.minLogicOffset = expectLogicOffset;
                 this.mappedFileQueue.setFlushedWhere(expectLogicOffset);
@@ -471,6 +503,8 @@ public class ConsumeQueue {
                 }
             }
             this.maxPhysicOffset = offset + size;
+
+            // 这里也是要把consumeQueue的数据追加到对应的内存中
             return mappedFile.appendMessage(this.byteBufferIndex.array());
         }
         return false;

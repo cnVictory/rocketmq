@@ -39,6 +39,10 @@ public class AllocateMappedFileService extends ServiceThread {
     private static int waitTimeOut = 1000 * 5;
     private ConcurrentMap<String, AllocateRequest> requestTable =
         new ConcurrentHashMap<String, AllocateRequest>();
+
+    /**
+     *  这里是一个优先级的阻塞队列，AllocateRequest实现了Comparable接口
+     */
     private PriorityBlockingQueue<AllocateRequest> requestQueue =
         new PriorityBlockingQueue<AllocateRequest>();
     private volatile boolean hasException = false;
@@ -48,8 +52,26 @@ public class AllocateMappedFileService extends ServiceThread {
         this.messageStore = messageStore;
     }
 
+    /**
+     * 提交两个创建映射文件的请求，路径分别为nextFilePath和nextNextFilePath
+     * 并等待路径为nextFilePath所对应的映射文件创建完成
+     * @param nextFilePath
+     * @param nextNextFilePath
+     * @param fileSize
+     * @return
+     */
     public MappedFile putRequestAndReturnMappedFile(String nextFilePath, String nextNextFilePath, int fileSize) {
+
+        // 默认可以提交2个请求
         int canSubmitRequests = 2;
+
+        /*
+            transientStorePool ： 堆外内存池
+         */
+        // 这段代码控制堆外内存池的buffer是否够用
+        // 仅当transientStorePoolEnable 为true，FlushDiskType为ASYNC_FLUSH，并且broker为主节点时，才启用transientStorePool
+        // 同时在启用快速失败策略时，计算transientStorePool中剩余的buffer数量减去requestQueue中待分配的数量后，
+        // 剩余的buffer数量，如果数量 <= 0 则快速失败
         if (this.messageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
             if (this.messageStore.getMessageStoreConfig().isFastFailIfNoBufferInStorePool()
                 && BrokerRole.SLAVE != this.messageStore.getMessageStoreConfig().getBrokerRole()) { //if broker is slave, don't fast fail even no buffer in pool
@@ -57,16 +79,23 @@ public class AllocateMappedFileService extends ServiceThread {
             }
         }
 
+        /*
+            如果requestTable中已经存在该路径文件的分配请求，说明该请求已经在排队中
+            就不需要再次检查transientStorePool中的buffer是否够用了，以及向requestQueue队列中添加分配请求
+         */
         AllocateRequest nextReq = new AllocateRequest(nextFilePath, fileSize);
         boolean nextPutOK = this.requestTable.putIfAbsent(nextFilePath, nextReq) == null;
 
+        // @1
         if (nextPutOK) {
+            // 如果可用的提交（也就是transientStorePool中的buffer不够用了） <= 0
             if (canSubmitRequests <= 0) {
                 log.warn("[NOTIFYME]TransientStorePool is not enough, so create mapped file error, " +
                     "RequestQueueSize : {}, StorePoolSize: {}", this.requestQueue.size(), this.messageStore.getTransientStorePool().availableBufferNums());
                 this.requestTable.remove(nextFilePath);
                 return null;
             }
+            // 再次尝试往requestQueue中添加这个请求
             boolean offerOK = this.requestQueue.offer(nextReq);
             if (!offerOK) {
                 log.warn("never expected here, add a request to preallocate queue failed");
@@ -74,6 +103,7 @@ public class AllocateMappedFileService extends ServiceThread {
             canSubmitRequests--;
         }
 
+        // @2 同@1的逻辑
         AllocateRequest nextNextReq = new AllocateRequest(nextNextFilePath, fileSize);
         boolean nextNextPutOK = this.requestTable.putIfAbsent(nextNextFilePath, nextNextReq) == null;
         if (nextNextPutOK) {
@@ -89,19 +119,29 @@ public class AllocateMappedFileService extends ServiceThread {
             }
         }
 
+        // mmapOperation 遇到了异常，先不创建映射文件了
         if (hasException) {
             log.warn(this.getServiceName() + " service has exception. so return null");
             return null;
         }
 
+        // 这里重新获取一下，如果有重试的情况，可以直接获取之前一个请求已经创建好的
         AllocateRequest result = this.requestTable.get(nextFilePath);
         try {
             if (result != null) {
+
+                /*
+                    AllocateRequest是内部类，代表分配请求，它实现了Comparable接口的compareTo方法，
+                    用于自定义分配请求在优先级队列中的优先级
+                    AllocateRequest中的countDownLatch 用于实现分配映射文件的等待通知线程模型，初始值为1,0代表完成映射文件的创建
+                    这里默认等待5ms
+                 */
                 boolean waitOK = result.getCountDownLatch().await(waitTimeOut, TimeUnit.MILLISECONDS);
-                if (!waitOK) {
+                if (!waitOK) {  // 等待超时，返回null快速失败
                     log.warn("create mmap timeout " + result.getFilePath() + " " + result.getFileSize());
                     return null;
                 } else {
+                    // 正常情况下
                     this.requestTable.remove(nextFilePath);
                     return result.getMappedFile();
                 }
@@ -131,9 +171,11 @@ public class AllocateMappedFileService extends ServiceThread {
         }
     }
 
+    // AllocateMappedFileService
     public void run() {
         log.info(this.getServiceName() + " service started");
 
+        // 线程一直在执行mmapOperation方法
         while (!this.isStopped() && this.mmapOperation()) {
 
         }
@@ -142,11 +184,14 @@ public class AllocateMappedFileService extends ServiceThread {
 
     /**
      * Only interrupted by the external thread, will return false
+     * 方法只有被外部线程中断，才会返回false
      */
     private boolean mmapOperation() {
         boolean isSuccess = false;
         AllocateRequest req = null;
         try {
+            // 优先级阻塞队列，一直在阻塞
+            // 检索并删除此队列的首节点，必要时等待，直到有元素可用
             req = this.requestQueue.take();
             AllocateRequest expectedRequest = this.requestTable.get(req.getFilePath());
             if (null == expectedRequest) {
@@ -164,12 +209,16 @@ public class AllocateMappedFileService extends ServiceThread {
                 long beginTime = System.currentTimeMillis();
 
                 MappedFile mappedFile;
+                // 开启transientStorePool 并且当前broker是master 且刷盘方式是ASYNC_FLUSH异步刷盘
                 if (messageStore.getMessageStoreConfig().isTransientStorePoolEnable()) {
                     try {
+                        // 这里是SPI，但是没有这个文件配置，所以走下面catch异常捕获里面
                         mappedFile = ServiceLoader.load(MappedFile.class).iterator().next();
                         mappedFile.init(req.getFilePath(), req.getFileSize(), messageStore.getTransientStorePool());
                     } catch (RuntimeException e) {
                         log.warn("Use default implementation.");
+
+                        // 走这里创建一个mappedFile文件 进去看下
                         mappedFile = new MappedFile(req.getFilePath(), req.getFileSize(), messageStore.getTransientStorePool());
                     }
                 } else {
@@ -184,26 +233,34 @@ public class AllocateMappedFileService extends ServiceThread {
                 }
 
                 // pre write mappedFile
+                // 预热mappedFile映射文件
                 if (mappedFile.getFileSize() >= this.messageStore.getMessageStoreConfig()
                     .getMappedFileSizeCommitLog()
                     &&
                     this.messageStore.getMessageStoreConfig().isWarmMapedFileEnable()) {
+
+                    // 预热映射文件
                     mappedFile.warmMappedFile(this.messageStore.getMessageStoreConfig().getFlushDiskType(),
                         this.messageStore.getMessageStoreConfig().getFlushLeastPagesWhenWarmMapedFile());
                 }
 
+                // 这里把获取到的mappedFile预热后，方到request中
                 req.setMappedFile(mappedFile);
                 this.hasException = false;
                 isSuccess = true;
             }
         } catch (InterruptedException e) {
             log.warn(this.getServiceName() + " interrupted, possibly by shutdown.");
+            // 标记发生异常
             this.hasException = true;
+            // 被中断，结束服务线程
             return false;
         } catch (IOException e) {
             log.warn(this.getServiceName() + " service has exception. ", e);
+            // 标记服务发生异常，但不会结束服务线程
             this.hasException = true;
             if (null != req) {
+                // 重新加入队列再试
                 requestQueue.offer(req);
                 try {
                     Thread.sleep(1);
@@ -211,6 +268,7 @@ public class AllocateMappedFileService extends ServiceThread {
                 }
             }
         } finally {
+            // 唤醒等待获取映射文件的线程
             if (req != null && isSuccess)
                 req.getCountDownLatch().countDown();
         }

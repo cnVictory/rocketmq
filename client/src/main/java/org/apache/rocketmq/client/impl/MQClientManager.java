@@ -27,6 +27,8 @@ import org.apache.rocketmq.remoting.RPCHook;
 
 public class MQClientManager {
     private final static InternalLogger log = ClientLogger.getLog();
+
+    // 单例对象
     private static MQClientManager instance = new MQClientManager();
     private AtomicInteger factoryIndexGenerator = new AtomicInteger();
     private ConcurrentMap<String/* clientId */, MQClientInstance> factoryTable =
@@ -45,12 +47,20 @@ public class MQClientManager {
     }
 
     public MQClientInstance getOrCreateMQClientInstance(final ClientConfig clientConfig, RPCHook rpcHook) {
+        // 构建客户端ID  IP@instanceName@unitName
         String clientId = clientConfig.buildMQClientId();
+        // 根据客户端ID获取客户端实例
         MQClientInstance instance = this.factoryTable.get(clientId);
+        // 如果客户端实例为空就创建
         if (null == instance) {
             instance =
                 new MQClientInstance(clientConfig.cloneClientConfig(),
                     this.factoryIndexGenerator.getAndIncrement(), clientId, rpcHook);
+            // 存入缓存表
+            /*
+                注意：在一个微服务下，如果DefaultMQProducer或consumer的clientId相同，则只创建一个MQClientInstance
+                如果IP@instanceName@unitName 这3个部分不完全相同，则需要单独创建一个MQClientInstance
+             */
             MQClientInstance prev = this.factoryTable.putIfAbsent(clientId, instance);
             if (prev != null) {
                 instance = prev;

@@ -18,6 +18,7 @@ package org.apache.rocketmq.example.quickstart;
 
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.client.producer.DefaultMQProducer;
+import org.apache.rocketmq.client.producer.SendCallback;
 import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.common.message.Message;
 import org.apache.rocketmq.remoting.common.RemotingHelper;
@@ -32,6 +33,7 @@ public class Producer {
          * Instantiate with a producer group name.
          */
         DefaultMQProducer producer = new DefaultMQProducer("please_rename_unique_group_name");
+        producer.setNamesrvAddr("192.168.44.1:9876");
 
         /*
          * Specify name server addresses.
@@ -50,7 +52,7 @@ public class Producer {
          */
         producer.start();
 
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 6; i++) {
             try {
 
                 /*
@@ -58,13 +60,33 @@ public class Producer {
                  */
                 Message msg = new Message("TopicTest" /* Topic */,
                     "TagA" /* Tag */,
-                    ("Hello RocketMQ " + i).getBytes(RemotingHelper.DEFAULT_CHARSET) /* Message body */
+                    ("Hello RocketMQ - " + i).getBytes(RemotingHelper.DEFAULT_CHARSET) /* Message body */
                 );
 
                 /*
                  * Call send message to deliver message to one of brokers.
                  */
+                producer.setRetryTimesWhenSendAsyncFailed(1);
                 SendResult sendResult = producer.send(msg);
+
+
+                // 异步可靠消息
+//                producer.send(msg, new SendCallback() {
+//
+//                    // 消息发送成功 返回
+//                    @Override
+//                    public void onSuccess(SendResult sendResult) {
+//                        System.out.println("发送成功");
+//                    }
+//
+//                    // 消息发送异常 返回 case异常，尝试重投，或者调用业务逻辑
+//                    @Override
+//                    public void onException(Throwable e) {
+//                        e.printStackTrace();
+//                        System.out.println("发送异常");
+//                    }
+//                });
+
 
                 System.out.printf("%s%n", sendResult);
             } catch (Exception e) {

@@ -45,16 +45,36 @@ import org.apache.rocketmq.common.protocol.route.TopicRouteData;
 import org.apache.rocketmq.common.sysflag.TopicSysFlag;
 import org.apache.rocketmq.remoting.common.RemotingUtil;
 
+/**
+ * 路由信息管理类
+ * RocketMQ 基于发布订阅的机制，一个Topic拥有多个消息队列，一个Broker为每一个主题创建4个读队列和4个写队列
+ * 多个broker组成一个集群，集群由相同的多台broker组成 Master-Slave架构，
+ * brokerId=0 代表master       brokerId>0 代表Slave
+ * brokerLiveInfo中的lastUpdateTimestamp存储上次收到的broker心跳包的时间
+ */
 public class RouteInfoManager {
     private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private final static long BROKER_CHANNEL_EXPIRED_TIME = 1000 * 60 * 2;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
+
+    // Topic 消息队列路由信息，消息发送时根据路由表进行负载均衡  发送消息时，消息最终发送到哪个broker，从这里面获取
     private final HashMap<String/* topic */, List<QueueData>> topicQueueTable;
+
+    // broker基础信息，包括brokerName 所属集群名称、 主备broker地址
     private final HashMap<String/* brokerName */, BrokerData> brokerAddrTable;
+
+    // broker集群信息，存储集群中所有broker名称
     private final HashMap<String/* clusterName */, Set<String/* brokerName */>> clusterAddrTable;
+
+    // broker状态信息，NameServer每次收到心跳包时会替换该信息
+    // 这里的broker存活信息不是实时的，namesrv每10s扫描一次所有的broker，根据心跳包的时间得知broker的状态
+    // 该机制也是导致当一个broker进程假死以后，消息生产者无法立即感知，可能继续向其发送消息，导致失败（非高可用）
     private final HashMap<String/* brokerAddr */, BrokerLiveInfo> brokerLiveTable;
+
+    // broker上的FilterServer列表，用于类模式消息过滤
     private final HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
 
+    // 创建路由信息管理器，初始化路由信息表
     public RouteInfoManager() {
         this.topicQueueTable = new HashMap<String, List<QueueData>>(1024);
         this.brokerAddrTable = new HashMap<String, BrokerData>(128);
@@ -111,6 +131,7 @@ public class RouteInfoManager {
         RegisterBrokerResult result = new RegisterBrokerResult();
         try {
             try {
+                // 上写锁  说明路由注册是一个串行化的过程  下面是更新了routeInfoManager中的5张路由相关的table
                 this.lock.writeLock().lockInterruptibly();
 
                 Set<String> brokerNames = this.clusterAddrTable.get(clusterName);
@@ -185,6 +206,8 @@ public class RouteInfoManager {
                     }
                 }
             } finally {
+
+                // 解锁  同步结束
                 this.lock.writeLock().unlock();
             }
         } catch (Exception e) {
@@ -431,10 +454,15 @@ public class RouteInfoManager {
         while (it.hasNext()) {
             Entry<String, BrokerLiveInfo> next = it.next();
             long last = next.getValue().getLastUpdateTimestamp();
+
+            // 超时120s没有上报心跳，就关闭channel
             if ((last + BROKER_CHANNEL_EXPIRED_TIME) < System.currentTimeMillis()) {
+                // 关闭broker连接
                 RemotingUtil.closeChannel(next.getValue().getChannel());
+                // 移除当前broker信息
                 it.remove();
                 log.warn("The broker channel expired, {} {}ms", next.getKey(), BROKER_CHANNEL_EXPIRED_TIME);
+                // 维护5张路由表
                 this.onChannelDestroy(next.getKey(), next.getValue().getChannel());
             }
         }
@@ -445,6 +473,7 @@ public class RouteInfoManager {
         if (channel != null) {
             try {
                 try {
+                    // 也是同步操作 加锁
                     this.lock.readLock().lockInterruptibly();
                     Iterator<Entry<String, BrokerLiveInfo>> itBrokerLiveTable =
                         this.brokerLiveTable.entrySet().iterator();
@@ -456,6 +485,7 @@ public class RouteInfoManager {
                         }
                     }
                 } finally {
+                    // 解锁
                     this.lock.readLock().unlock();
                 }
             } catch (Exception e) {
@@ -473,6 +503,7 @@ public class RouteInfoManager {
 
             try {
                 try {
+                    // 也是同步操作 加锁
                     this.lock.writeLock().lockInterruptibly();
                     this.brokerLiveTable.remove(brokerAddrFound);
                     this.filterServerTable.remove(brokerAddrFound);
@@ -553,6 +584,7 @@ public class RouteInfoManager {
                         }
                     }
                 } finally {
+                    // 解锁
                     this.lock.writeLock().unlock();
                 }
             } catch (Exception e) {
@@ -752,9 +784,13 @@ public class RouteInfoManager {
     }
 }
 
+// broker心跳的信息
 class BrokerLiveInfo {
+    // 最后一次上报心跳的时间
     private long lastUpdateTimestamp;
+    // 数据版本
     private DataVersion dataVersion;
+    // netty中的Channel，用于获取netty连接的channel
     private Channel channel;
     private String haServerAddr;
 

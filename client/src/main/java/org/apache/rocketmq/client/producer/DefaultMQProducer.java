@@ -158,6 +158,7 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     public DefaultMQProducer(final String producerGroup, RPCHook rpcHook, boolean enableMsgTrace,
         final String customizedTraceTopic) {
         this.producerGroup = producerGroup;
+        // 在创建MQProducer的时候创建了一个DefaultMqProducerImpl的实例
         defaultMQProducerImpl = new DefaultMQProducerImpl(this, rpcHook);
         //if client open the message trace feature
         if (enableMsgTrace) {
@@ -266,9 +267,11 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
      *
      * @throws MQClientException if there is any unexpected error.
      */
+    // MQ Producer 开始  这里整合springboot的时候，也要在配置MQProducer的时候使用start方法
     @Override
     public void start() throws MQClientException {
         this.setProducerGroup(withNamespace(this.producerGroup));
+        // 启动
         this.defaultMQProducerImpl.start();
         if (null != traceDispatcher) {
             try {
@@ -281,9 +284,11 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
 
     /**
      * This method shuts down this producer instance and releases related resources.
+     * 当Spring Bean 销毁时，调用DefaultMQProducer的shutdown 方法
      */
     @Override
     public void shutdown() {
+        // 停止 Producer
         this.defaultMQProducerImpl.shutdown();
         if (null != traceDispatcher) {
             traceDispatcher.shutdown();
@@ -320,8 +325,13 @@ public class DefaultMQProducer extends ClientConfig implements MQProducer {
     @Override
     public SendResult send(
         Message msg) throws MQClientException, RemotingException, MQBrokerException, InterruptedException {
+
+        // 基本校验
         Validators.checkMessage(msg, this);
+        // 设置Topic
         msg.setTopic(withNamespace(msg.getTopic()));
+
+        // 发送消息并返回结果
         return this.defaultMQProducerImpl.send(msg);
     }
 
